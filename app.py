@@ -608,7 +608,7 @@ with tab4:
         ]
     ]
 
-    fig = px.scatter(
+    fig = scatter(
         financial_view,
         x="Balance",
         y="EstimatedSalary",
