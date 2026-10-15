@@ -340,7 +340,7 @@ with tab1:
             .reset_index(name="Customers")
         )
 
-        fig = px.pie(
+        fig = pie(
             status_counts,
             names="Status",
             values="Customers",
@@ -362,7 +362,7 @@ with tab1:
 
         churn_by_gender["Churn_Rate"] *= 100
 
-        fig = px.bar(
+        fig = bar(
             churn_by_gender,
             x="Gender",
             y="Churn_Rate",
@@ -416,7 +416,7 @@ with tab2:
     left, right = st.columns(2)
 
     with left:
-        fig = px.bar(
+        fig = bar(
             geo_analysis,
             x="Geography",
             y="Churn_Rate",
@@ -428,7 +428,7 @@ with tab2:
         st.plotly_chart(fig, use_container_width=True)
 
     with right:
-        fig = px.bar(
+        fig = bar(
             geo_analysis,
             x="Geography",
             y="Churned_Customers",
@@ -492,7 +492,7 @@ with tab3:
     left, right = st.columns(2)
 
     with left:
-        fig = px.bar(
+        fig = bar(
             segment_analysis,
             x=segment_column,
             y="Churn_Rate",
@@ -504,7 +504,7 @@ with tab3:
         st.plotly_chart(fig, use_container_width=True)
 
     with right:
-        fig = px.bar(
+        fig = bar(
             segment_analysis,
             x=segment_column,
             y="Churn_Contribution",
@@ -556,7 +556,7 @@ with tab4:
     left, right = st.columns(2)
 
     with left:
-        fig = px.box(
+        fig = box(
             filtered,
             x="Customer_Status",
             y="Balance",
@@ -567,7 +567,7 @@ with tab4:
         st.plotly_chart(fig, use_container_width=True)
 
     with right:
-        fig = px.box(
+        fig = sbox(
             filtered,
             x="Customer_Status",
             y="EstimatedSalary",
