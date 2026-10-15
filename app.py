@@ -1,161 +1,692 @@
-"""Customer Segmentation & Churn Pattern Analytics in European Banking
-Run:  pip install -r requirements.txt  ->  streamlit run app.py
-"""
-import pandas as pd
-import plotly.express as px
+```python
 import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
 
-st.set_page_config(page_title="European Bank Churn Analytics", page_icon="🏦", layout="wide")
+# --------------------------------------------------
+# PAGE CONFIGURATION
+# --------------------------------------------------
 
+st.set_page_config(
+    page_title="European Banking | Churn Analytics",
+    page_icon="🏦",
+    layout="wide"
+)
 
-# ---------------------------------------------------------------- data
-@st.cache_data
-def load_data(path="European_Bank.csv"):
-    df = pd.read_csv(path)
-    # validation
-    for c in ["HasCrCard", "IsActiveMember", "Exited"]:
-        assert set(df[c].unique()) <= {0, 1}, f"{c} is not binary"
-    df = df.drop(columns=["Surname"])  # non-analytical
-    df["Age_Group"] = pd.cut(df.Age, [0, 29, 45, 60, 200], labels=["<30", "30-45", "46-60", "60+"])
-    df["Tenure_Group"] = pd.cut(df.Tenure, [-1, 2, 6, 20], labels=["New (0-2)", "Mid-term (3-6)", "Long-term (7+)"])
-    df["Credit_Band"] = pd.cut(df.CreditScore, [0, 579, 669, 900], labels=["Low", "Medium", "High"])
-    med = df.loc[df.Balance > 0, "Balance"].median()
-    df["Balance_Segment"] = pd.cut(df.Balance, [-1, 0, med, 1e12], labels=["Zero", "Low", "High"])
-    df["Status"] = df.Exited.map({1: "Churned", 0: "Retained"})
-    return df
+# --------------------------------------------------
+# CUSTOM CSS
+# --------------------------------------------------
 
+st.markdown("""
+<style>
+    .main {
+        background-color: #f5f7fb;
+    }
 
-df = load_data()
-HV_CUT = df.Balance.quantile(0.75)  # high-value = top 25% by balance
+    .block-container {
+        padding-top: 1.5rem;
+    }
 
-# ------------------------------------------------------------- filters
-st.sidebar.header("Segment filters")
-geo = st.sidebar.multiselect("Geography", df.Geography.unique(), df.Geography.unique())
-gen = st.sidebar.multiselect("Gender", df.Gender.unique(), df.Gender.unique())
-age = st.sidebar.multiselect("Age group", df.Age_Group.cat.categories, df.Age_Group.cat.categories)
-ten = st.sidebar.multiselect("Tenure group", df.Tenure_Group.cat.categories, df.Tenure_Group.cat.categories)
-cb = st.sidebar.multiselect("Credit band", df.Credit_Band.cat.categories, df.Credit_Band.cat.categories)
-bal = st.sidebar.multiselect("Balance segment", df.Balance_Segment.cat.categories, df.Balance_Segment.cat.categories)
+    .main-title {
+        font-size: 32px;
+        font-weight: 700;
+        color: #16325c;
+    }
 
-f = df[
-    df.Geography.isin(geo) & df.Gender.isin(gen) & df.Age_Group.isin(age)
-    & df.Tenure_Group.isin(ten) & df.Credit_Band.isin(cb) & df.Balance_Segment.isin(bal)
+    .subtitle {
+        font-size: 15px;
+        color: #65758b;
+    }
+
+    div[data-testid="stMetric"] {
+        background-color: white;
+        padding: 18px;
+        border-radius: 12px;
+        border: 1px solid #e2e8f0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --------------------------------------------------
+# HEADER
+# --------------------------------------------------
+
+st.markdown(
+    '<div class="main-title">🏦 Customer Segmentation & Churn Analytics</div>',
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    '<div class="subtitle">European Banking | Customer Behaviour | '
+    'Financial Risk | Retention Analytics</div>',
+    unsafe_allow_html=True
+)
+
+st.divider()
+
+# --------------------------------------------------
+# DATASET UPLOAD
+# --------------------------------------------------
+
+uploaded_file = st.sidebar.file_uploader(
+    "Upload Banking Dataset (CSV)",
+    type=["csv"]
+)
+
+if uploaded_file is None:
+    st.info("Please upload your European Banking customer CSV dataset.")
+    st.markdown("""
+    ### Expected columns
+
+    - CustomerId
+    - Surname
+    - CreditScore
+    - Geography
+    - Gender
+    - Age
+    - Tenure
+    - Balance
+    - NumOfProducts
+    - HasCrCard
+    - IsActiveMember
+    - EstimatedSalary
+    - Exited
+
+    **Exited:** 1 = Churned, 0 = Retained
+    """)
+    st.stop()
+
+# --------------------------------------------------
+# LOAD DATA
+# --------------------------------------------------
+
+try:
+    df = pd.read_csv(uploaded_file)
+except Exception as e:
+    st.error(f"Unable to read CSV: {e}")
+    st.stop()
+
+df.columns = df.columns.str.strip()
+
+required_columns = [
+    "CustomerId", "CreditScore", "Geography", "Gender",
+    "Age", "Tenure", "Balance", "NumOfProducts",
+    "HasCrCard", "IsActiveMember", "EstimatedSalary", "Exited"
 ]
-if f.empty:
+
+missing_columns = [
+    col for col in required_columns if col not in df.columns
+]
+
+if missing_columns:
+    st.error(f"Missing required columns: {missing_columns}")
+    st.stop()
+
+# --------------------------------------------------
+# DATA VALIDATION
+# --------------------------------------------------
+
+st.sidebar.header("Dashboard Filters")
+
+with st.expander("📋 Data Quality & Validation", expanded=False):
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("Total Rows", f"{len(df):,}")
+    col2.metric("Total Columns", len(df.columns))
+    col3.metric("Duplicate Rows", int(df.duplicated().sum()))
+
+    st.subheader("Missing Values")
+
+    missing_data = df.isnull().sum().reset_index()
+    missing_data.columns = ["Column", "Missing Values"]
+    missing_data = missing_data[missing_data["Missing Values"] > 0]
+
+    if missing_data.empty:
+        st.success("No missing values found.")
+    else:
+        st.dataframe(missing_data, use_container_width=True)
+
+    st.subheader("Dataset Preview")
+    st.dataframe(df.head(10), use_container_width=True)
+
+# --------------------------------------------------
+# DATA PREPARATION
+# --------------------------------------------------
+
+data = df.copy()
+
+numeric_columns = [
+    "CreditScore", "Age", "Tenure", "Balance",
+    "NumOfProducts", "HasCrCard", "IsActiveMember",
+    "EstimatedSalary", "Exited"
+]
+
+for col in numeric_columns:
+    data[col] = pd.to_numeric(data[col], errors="coerce")
+
+data = data.dropna(subset=required_columns)
+
+# Validate binary target and binary indicator columns.
+data = data[
+    data["Exited"].isin([0, 1]) &
+    data["HasCrCard"].isin([0, 1]) &
+    data["IsActiveMember"].isin([0, 1])
+].copy()
+
+if data.empty:
+    st.error("No valid customer records remain after data validation.")
+    st.stop()
+
+data["Exited"] = data["Exited"].astype(int)
+data["HasCrCard"] = data["HasCrCard"].astype(int)
+data["IsActiveMember"] = data["IsActiveMember"].astype(int)
+
+# --------------------------------------------------
+# CUSTOMER SEGMENTATION
+# --------------------------------------------------
+
+data["Age_Group"] = pd.cut(
+    data["Age"],
+    bins=[-np.inf, 30, 45, 60, np.inf],
+    labels=["Under 30", "30–45", "46–60", "60+"],
+    right=True
+)
+
+data["Credit_Score_Band"] = pd.cut(
+    data["CreditScore"],
+    bins=[-np.inf, 579, 669, np.inf],
+    labels=["Low", "Medium", "High"]
+)
+
+data["Tenure_Group"] = pd.cut(
+    data["Tenure"],
+    bins=[-np.inf, 2, 6, np.inf],
+    labels=["New", "Mid-term", "Long-term"]
+)
+
+balance_75 = data["Balance"].quantile(0.75)
+
+data["Balance_Segment"] = np.select(
+    [
+        data["Balance"].eq(0),
+        data["Balance"].gt(0) & data["Balance"].le(balance_75),
+        data["Balance"].gt(balance_75)
+    ],
+    [
+        "Zero Balance",
+        "Low Balance",
+        "High Balance"
+    ],
+    default="Zero Balance"
+)
+
+# High-value proxy: upper quartile of positive account balances.
+positive_balances = data.loc[data["Balance"] > 0, "Balance"]
+
+if len(positive_balances) > 0:
+    high_value_threshold = positive_balances.quantile(0.75)
+    data["High_Value"] = data["Balance"] >= high_value_threshold
+    data.loc[data["Balance"] <= 0, "High_Value"] = False
+else:
+    high_value_threshold = 0
+    data["High_Value"] = False
+
+data["Customer_Status"] = data["Exited"].map({
+    0: "Retained",
+    1: "Churned"
+})
+
+# --------------------------------------------------
+# SIDEBAR FILTERS
+# --------------------------------------------------
+
+geographies = sorted(data["Geography"].dropna().unique().tolist())
+genders = sorted(data["Gender"].dropna().unique().tolist())
+
+selected_geo = st.sidebar.multiselect(
+    "Geography",
+    geographies,
+    default=geographies
+)
+
+selected_gender = st.sidebar.multiselect(
+    "Gender",
+    genders,
+    default=genders
+)
+
+selected_age = st.sidebar.multiselect(
+    "Age Group",
+    data["Age_Group"].dropna().astype(str).unique().tolist(),
+    default=data["Age_Group"].dropna().astype(str).unique().tolist()
+)
+
+selected_status = st.sidebar.multiselect(
+    "Customer Status",
+    ["Retained", "Churned"],
+    default=["Retained", "Churned"]
+)
+
+filtered = data[
+    data["Geography"].isin(selected_geo) &
+    data["Gender"].isin(selected_gender) &
+    data["Age_Group"].astype(str).isin(selected_age) &
+    data["Customer_Status"].isin(selected_status)
+].copy()
+
+if filtered.empty:
     st.warning("No customers match the selected filters.")
     st.stop()
 
+# --------------------------------------------------
+# KPI CALCULATIONS
+# --------------------------------------------------
 
-def churn_by(col, data=f):
-    g = data.groupby(col, observed=True).Exited.agg(Customers="count", Churned="sum").reset_index()
-    g["Churn Rate %"] = (g.Churned / g.Customers * 100).round(1)
-    g["Share of All Churn %"] = (g.Churned / max(g.Churned.sum(), 1) * 100).round(1)
-    return g
+total_customers = len(filtered)
+churned_customers = int(filtered["Exited"].sum())
+retained_customers = total_customers - churned_customers
 
+churn_rate = filtered["Exited"].mean() * 100
 
-# ----------------------------------------------------------------- KPIs
-overall = f.Exited.mean() * 100
-hv = f[f.Balance >= HV_CUT]
-hv_churn = hv.Exited.mean() * 100 if len(hv) else float("nan")
-act = f[f.IsActiveMember == 1].Exited.mean() * 100 if (f.IsActiveMember == 1).any() else float("nan")
-inact = f[f.IsActiveMember == 0].Exited.mean() * 100 if (f.IsActiveMember == 0).any() else float("nan")
+high_value_customers = filtered[filtered["High_Value"]]
+high_value_churn_rate = (
+    high_value_customers["Exited"].mean() * 100
+    if len(high_value_customers) > 0 else 0
+)
 
-st.title("🏦 Customer Segmentation & Churn Analytics – European Banking")
-k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("Overall Churn Rate", f"{overall:.1f}%", f"{overall - df.Exited.mean()*100:+.1f} pts vs all")
-k2.metric("Customers", f"{len(f):,}")
-k3.metric("High-Value Churn Ratio", f"{hv_churn:.1f}%")
-k4.metric("Engagement Drop (inactive ÷ active)", f"{inact/act:.2f}x" if act else "n/a")
-k5.metric("Balance Lost to Churn", f"€{f.loc[f.Exited==1,'Balance'].sum()/1e6:,.1f}M")
+inactive_customers = filtered[filtered["IsActiveMember"] == 0]
+inactive_churn_rate = (
+    inactive_customers["Exited"].mean() * 100
+    if len(inactive_customers) > 0 else 0
+)
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["Overview", "Geography", "Age & Tenure", "High-Value Explorer", "Segments & Drill-down"])
+# --------------------------------------------------
+# NAVIGATION
+# --------------------------------------------------
 
-# ------------------------------------------------------------ overview
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📊 Overview",
+    "🌍 Geography",
+    "👥 Segmentation",
+    "💰 Financial Risk",
+    "📋 Customer Explorer"
+])
+
+# --------------------------------------------------
+# TAB 1: OVERVIEW
+# --------------------------------------------------
+
 with tab1:
-    c1, c2 = st.columns(2)
-    c1.plotly_chart(px.pie(f, names="Status", title="Churned vs Retained", hole=.5,
-                           color="Status", color_discrete_map={"Churned": "#d62728", "Retained": "#1f77b4"}),
-                    width='stretch')
-    p = churn_by("Gender")
-    c2.plotly_chart(px.bar(p, x="Gender", y="Churn Rate %", text="Churn Rate %", title="Churn by Gender"),
-                    width='stretch')
-    c3, c4 = st.columns(2)
-    n = churn_by("NumOfProducts")
-    c3.plotly_chart(px.bar(n, x="NumOfProducts", y="Churn Rate %", text="Churn Rate %",
-                           title="Churn by Number of Products"), width='stretch')
-    a = churn_by("IsActiveMember")
-    a["IsActiveMember"] = a.IsActiveMember.map({1: "Active", 0: "Inactive"})
-    c4.plotly_chart(px.bar(a, x="IsActiveMember", y="Churn Rate %", text="Churn Rate %",
-                           title="Engagement: Active vs Inactive"), width='stretch')
-    st.subheader("Churned vs retained profile")
-    prof = f.groupby("Status")[["CreditScore", "Age", "Tenure", "Balance", "NumOfProducts",
-                                "EstimatedSalary", "IsActiveMember"]].mean().round(1).T
-    st.dataframe(prof, width='stretch')
 
-# ----------------------------------------------------------- geography
+    st.subheader("Executive Overview")
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric("Total Customers", f"{total_customers:,}")
+    c2.metric("Churned Customers", f"{churned_customers:,}")
+    c3.metric("Churn Rate", f"{churn_rate:.2f}%")
+    c4.metric("Retained Customers", f"{retained_customers:,}")
+
+    st.divider()
+
+    left, right = st.columns(2)
+
+    with left:
+        status_counts = (
+            filtered["Customer_Status"]
+            .value_counts()
+            .rename_axis("Status")
+            .reset_index(name="Customers")
+        )
+
+        fig = px.pie(
+            status_counts,
+            names="Status",
+            values="Customers",
+            hole=0.55,
+            title="Customer Churn Distribution"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    with right:
+        churn_by_gender = (
+            filtered.groupby("Gender", observed=True)
+            .agg(
+                Customers=("Exited", "size"),
+                Churn_Rate=("Exited", "mean")
+            )
+            .reset_index()
+        )
+
+        churn_by_gender["Churn_Rate"] *= 100
+
+        fig = px.bar(
+            churn_by_gender,
+            x="Gender",
+            y="Churn_Rate",
+            color="Gender",
+            text_auto=".2f",
+            title="Churn Rate by Gender (%)"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Key Performance Indicators")
+
+    k1, k2, k3 = st.columns(3)
+
+    k1.metric(
+        "High-Value Customer Churn",
+        f"{high_value_churn_rate:.2f}%"
+    )
+
+    k2.metric(
+        "Inactive Customer Churn",
+        f"{inactive_churn_rate:.2f}%"
+    )
+
+    k3.metric(
+        "Average Customer Tenure",
+        f"{filtered['Tenure'].mean():.2f} years"
+    )
+
+# --------------------------------------------------
+# TAB 2: GEOGRAPHY
+# --------------------------------------------------
+
 with tab2:
-    g = churn_by("Geography")
-    g["Geographic Risk Index"] = (g["Churn Rate %"] / overall).round(2)
-    c1, c2 = st.columns(2)
-    c1.plotly_chart(px.bar(g, x="Geography", y="Churn Rate %", text="Churn Rate %",
-                           color="Geography", title="Churn Rate by Country"), width='stretch')
-    c2.plotly_chart(px.pie(g, names="Geography", values="Churned", title="Share of Total Churn by Country"),
-                    width='stretch')
-    st.caption("Geographic Risk Index = country churn rate ÷ overall churn rate (>1 means above-average risk).")
-    st.dataframe(g, width='stretch', hide_index=True)
-    ga = f.groupby(["Geography", "Age_Group"], observed=True).Exited.mean().mul(100).round(1).reset_index()
-    st.plotly_chart(px.density_heatmap(ga, x="Age_Group", y="Geography", z="Exited", text_auto=True,
-                                       color_continuous_scale="Reds", title="Geography × Age churn % (interaction)"),
-                    width='stretch')
 
-# ------------------------------------------------------- age & tenure
+    st.subheader("Geographic Churn Analysis")
+
+    geo_analysis = (
+        filtered.groupby("Geography", observed=True)
+        .agg(
+            Total_Customers=("Exited", "size"),
+            Churned_Customers=("Exited", "sum"),
+            Churn_Rate=("Exited", "mean"),
+            Average_Balance=("Balance", "mean")
+        )
+        .reset_index()
+    )
+
+    geo_analysis["Churn_Rate"] *= 100
+
+    left, right = st.columns(2)
+
+    with left:
+        fig = px.bar(
+            geo_analysis,
+            x="Geography",
+            y="Churn_Rate",
+            color="Geography",
+            text_auto=".2f",
+            title="Churn Rate by Country (%)"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    with right:
+        fig = px.bar(
+            geo_analysis,
+            x="Geography",
+            y="Churned_Customers",
+            color="Geography",
+            text_auto=True,
+            title="Number of Churned Customers"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Country-Level Summary")
+
+    st.dataframe(
+        geo_analysis.round(2),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.caption(
+        "Geographic risk should be interpreted using both churn rate "
+        "and the number of churned customers."
+    )
+
+# --------------------------------------------------
+# TAB 3: SEGMENTATION
+# --------------------------------------------------
+
 with tab3:
-    c1, c2 = st.columns(2)
-    ag = churn_by("Age_Group")
-    c1.plotly_chart(px.bar(ag, x="Age_Group", y="Churn Rate %", text="Churn Rate %", title="Churn by Age Group"),
-                    width='stretch')
-    tg = churn_by("Tenure_Group")
-    c2.plotly_chart(px.bar(tg, x="Tenure_Group", y="Churn Rate %", text="Churn Rate %", title="Churn by Tenure"),
-                    width='stretch')
-    st.plotly_chart(px.histogram(f, x="Age", color="Status", barmode="overlay", nbins=40, opacity=.65,
-                                 title="Age distribution: churned vs retained"), width='stretch')
-    st.dataframe(ag, width='stretch', hide_index=True)
 
-# --------------------------------------------------- high-value explorer
+    st.subheader("Customer Segment Analysis")
+
+    segment_column = st.selectbox(
+        "Select a segmentation dimension",
+        [
+            "Age_Group",
+            "Credit_Score_Band",
+            "Tenure_Group",
+            "Balance_Segment",
+            "NumOfProducts",
+            "IsActiveMember",
+            "HasCrCard"
+        ]
+    )
+
+    segment_analysis = (
+        filtered.groupby(segment_column, observed=True)
+        .agg(
+            Customers=("Exited", "size"),
+            Churned=("Exited", "sum"),
+            Churn_Rate=("Exited", "mean")
+        )
+        .reset_index()
+    )
+
+    segment_analysis["Churn_Rate"] *= 100
+    segment_analysis["Churn_Contribution"] = (
+        segment_analysis["Churned"] /
+        max(churned_customers, 1) * 100
+    )
+
+    left, right = st.columns(2)
+
+    with left:
+        fig = px.bar(
+            segment_analysis,
+            x=segment_column,
+            y="Churn_Rate",
+            color="Churn_Rate",
+            text_auto=".2f",
+            title="Churn Rate by Segment (%)"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    with right:
+        fig = px.bar(
+            segment_analysis,
+            x=segment_column,
+            y="Churn_Contribution",
+            text_auto=".2f",
+            title="Share of All Churned Customers (%)"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Segment Performance Table")
+
+    st.dataframe(
+        segment_analysis.round(2),
+        use_container_width=True,
+        hide_index=True
+    )
+
+# --------------------------------------------------
+# TAB 4: FINANCIAL RISK
+# --------------------------------------------------
+
 with tab4:
-    st.write(f"High-value customers = balance ≥ **€{HV_CUT:,.0f}** (top 25% of all customers).")
-    thr = st.slider("Custom balance threshold (€)", 0, int(df.Balance.max()), int(HV_CUT), 5000)
-    h = f[f.Balance >= thr]
-    if h.empty:
-        st.info("No customers above this threshold in the current filters.")
-    else:
-        m1, m2, m3 = st.columns(3)
-        m1.metric("High-value customers", f"{len(h):,}")
-        m2.metric("Churn rate", f"{h.Exited.mean()*100:.1f}%")
-        m3.metric("Balance at risk", f"€{h.loc[h.Exited==1,'Balance'].sum()/1e6:,.1f}M")
-        st.plotly_chart(px.scatter(h, x="EstimatedSalary", y="Balance", color="Status", opacity=.6,
-                                   color_discrete_map={"Churned": "#d62728", "Retained": "#1f77b4"},
-                                   title="Salary vs Balance (high-value customers)"), width='stretch')
-        hg = churn_by("Geography", h)
-        st.plotly_chart(px.bar(hg, x="Geography", y="Churn Rate %", text="Churn Rate %",
-                               title="High-value churn by country"), width='stretch')
-        st.subheader("Top high-balance churners")
-        st.dataframe(h[h.Exited == 1].nlargest(25, "Balance")[
-            ["CustomerId", "Geography", "Gender", "Age", "Tenure", "Balance", "EstimatedSalary",
-             "NumOfProducts", "IsActiveMember"]], width='stretch', hide_index=True)
 
-# --------------------------------------------------------- drill-down
+    st.subheader("High-Value Customer & Financial Risk")
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric(
+        "High-Value Customers",
+        f"{len(high_value_customers):,}"
+    )
+
+    c2.metric(
+        "High-Value Churners",
+        f"{int(high_value_customers['Exited'].sum()):,}"
+    )
+
+    c3.metric(
+        "High-Value Churn Rate",
+        f"{high_value_churn_rate:.2f}%"
+    )
+
+    st.caption(
+        "High-value is defined here as customers whose positive account "
+        "balance is at or above the 75th percentile of positive balances. "
+        "Balance alone is a proxy, not a complete measure of customer value."
+    )
+
+    left, right = st.columns(2)
+
+    with left:
+        fig = px.box(
+            filtered,
+            x="Customer_Status",
+            y="Balance",
+            color="Customer_Status",
+            title="Account Balance: Churned vs Retained"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    with right:
+        fig = px.box(
+            filtered,
+            x="Customer_Status",
+            y="EstimatedSalary",
+            color="Customer_Status",
+            title="Estimated Salary: Churned vs Retained"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Balance and Churn Relationship")
+
+    financial_summary = (
+        filtered.groupby("Customer_Status", observed=True)
+        .agg(
+            Customers=("CustomerId", "size"),
+            Average_Balance=("Balance", "mean"),
+            Average_Salary=("EstimatedSalary", "mean"),
+            Average_Credit_Score=("CreditScore", "mean"),
+            Average_Tenure=("Tenure", "mean")
+        )
+        .reset_index()
+    )
+
+    st.dataframe(
+        financial_summary.round(2),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.subheader("Financial Profile Explorer")
+
+    financial_view = filtered[
+        [
+            "CustomerId", "Geography", "Age",
+            "Balance", "EstimatedSalary", "NumOfProducts",
+            "IsActiveMember", "Exited", "Customer_Status",
+            "High_Value"
+        ]
+    ]
+
+    fig = px.scatter(
+        financial_view,
+        x="Balance",
+        y="EstimatedSalary",
+        color="Customer_Status",
+        size="NumOfProducts",
+        hover_data=["Geography", "Age", "High_Value"],
+        title="Customer Financial Profile"
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+# --------------------------------------------------
+# TAB 5: CUSTOMER EXPLORER
+# --------------------------------------------------
+
 with tab5:
-    dim = st.selectbox("Segment dimension", ["Geography", "Age_Group", "Credit_Band", "Tenure_Group",
-                                             "Balance_Segment", "Gender", "NumOfProducts"])
-    t = churn_by(dim)
-    st.plotly_chart(px.bar(t, x=dim, y="Churn Rate %", text="Churn Rate %", title=f"Churn by {dim}"),
-                    width='stretch')
-    st.dataframe(t, width='stretch', hide_index=True)
-    sub = st.selectbox(f"Drill into a {dim} value", t[dim].astype(str).tolist())
-    d2 = f[f[dim].astype(str) == sub]
-    other = st.selectbox("…then break down by", [c for c in ["Geography", "Age_Group", "Credit_Band",
-                         "Tenure_Group", "Balance_Segment", "Gender"] if c != dim])
-    st.dataframe(churn_by(other, d2), width='stretch', hide_index=True)
-    st.download_button("Download filtered data (CSV)", f.to_csv(index=False), "filtered_customers.csv")
+
+    st.subheader("Customer-Level Explorer")
+
+    explorer_status = st.selectbox(
+        "Choose customer status",
+        ["All", "Churned", "Retained"]
+    )
+
+    explorer = filtered.copy()
+
+    if explorer_status != "All":
+        explorer = explorer[
+            explorer["Customer_Status"] == explorer_status
+        ]
+
+    display_columns = [
+        "CustomerId",
+        "Geography",
+        "Gender",
+        "Age",
+        "Age_Group",
+        "CreditScore",
+        "Credit_Score_Band",
+        "Tenure",
+        "Tenure_Group",
+        "Balance",
+        "Balance_Segment",
+        "EstimatedSalary",
+        "NumOfProducts",
+        "IsActiveMember",
+        "Exited",
+        "Customer_Status",
+        "High_Value"
+    ]
+
+    st.write(f"Customers displayed: {len(explorer):,}")
+
+    st.dataframe(
+        explorer[display_columns],
+        use_container_width=True,
+        hide_index=True
+    )
+
+    csv_data = explorer[display_columns].to_csv(index=False).encode("utf-8")
+
+    st.download_button(
+        label="⬇️ Download Customer Analysis CSV",
+        data=csv_data,
+        file_name="customer_churn_analysis.csv",
+        mime="text/csv"
+    )
+
+# --------------------------------------------------
+# FOOTER
+# --------------------------------------------------
+
+st.divider()
+
+st.caption(
+    "Customer Segmentation & Churn Pattern Analytics in European Banking | "
+    "Exploratory analytics for decision support. "
+    "Results describe historical patterns and do not establish causation."
+)
+```
