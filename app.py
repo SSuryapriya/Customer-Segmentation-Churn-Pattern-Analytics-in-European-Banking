@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -689,4 +688,4 @@ st.caption(
     "Exploratory analytics for decision support. "
     "Results describe historical patterns and do not establish causation."
 )
-```
+
